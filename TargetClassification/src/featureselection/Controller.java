@@ -11,11 +11,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-import tree.ProcessDataForGrowing;
 import tree.TreeGrowthControl;
 
 /**
@@ -24,6 +21,10 @@ import tree.TreeGrowthControl;
  */
 public class Controller
 {
+
+	public Controller()
+	{
+	}
 
 	public Controller(String[] args)
 	{
@@ -172,13 +173,19 @@ public class Controller
 		}
 		String outputLocation = args[1];  // The location to store any and all results.
 		File outputDirectory = new File(outputLocation);
-		if (outputDirectory.isDirectory())
+		if (!outputDirectory.exists())
 		{
-			removeDirectoryContent(outputDirectory);
+			boolean isDirCreated = outputDirectory.mkdirs();
+			if (!isDirCreated)
+			{
+				System.out.println("The output directory could not be created.");
+				System.exit(0);
+			}
+			
 		}
-		boolean isDirCreated = outputDirectory.mkdirs();
-		if (!isDirCreated)
+		else if (!outputDirectory.isDirectory())
 		{
+			// Exists and is not a directory.
 			System.out.println("The second argument must be a valid directory location or location where a directory can be created.");
 			System.exit(0);
 		}
@@ -245,11 +252,7 @@ public class Controller
 	        System.exit(0);
 		}
 
-		// Determine the vector of weights to use.
-		Double weightVector[] = determineWeights(args[0]);
-
 		// Run the GA multiple times.
-		List<Integer[]> bestIndividuals = new ArrayList<Integer[]>();
 		for (int i = 0; i < gaRepetitions; i++)
 		{
 			System.out.format("GA round : %d.\n", i);
@@ -257,115 +260,15 @@ public class Controller
 			thisGAArgs[1] += "/" + Integer.toString(i);
 			if (isXValUsed)
 			{
-				steadystate.CrossValController gaRun = new steadystate.CrossValController(thisGAArgs, ctrl, weightVector);
-				bestIndividuals.addAll(gaRun.bestMembersFound);
+				new steadystate.CrossValController(thisGAArgs, ctrl);
 			}
 			else
 			{
-				steadystate.Controller gaRun = new steadystate.Controller(thisGAArgs, ctrl, weightVector);
-				bestIndividuals.addAll(gaRun.bestMembersFound);
+				new steadystate.Controller(thisGAArgs, ctrl);
 			}
 		}
 
-		// Get the names and types of the features (the types are so that you know which features are the response and which aren't used).
-		String featureNames[] = null;
-		String featureTypes[] = null;
-		try (BufferedReader reader = Files.newBufferedReader(Paths.get(inputLocation), StandardCharsets.UTF_8))
-		{
-			String line = reader.readLine();
-			line = line.replaceAll("\n", "");
-			featureNames = line.split("\t");
-
-			line = reader.readLine();
-			line = line.toLowerCase();
-			line = line.replaceAll("\n", "");
-			featureTypes = line.split("\t");
-		}
-		catch (Exception e)
-		{
-			System.err.println(e.getStackTrace());
-			System.exit(0);
-		}
-
-		// Determine the features that are used in the GAs.
-		List<String> featuresUsed = new ArrayList<String>();
-		for (int i = 0; i < featureNames.length; i++)
-		{
-			if (featureTypes[i].equals("x") || featureTypes[i].equals("r"))
-			{
-				// If the feature is a response variable or is to be skipped.
-				continue;
-			}
-			featuresUsed.add(featureNames[i]);
-		}
-
-		// Generate the output matrix.
-		List<Integer> featureSums = new ArrayList<Integer>();
-		try
-		{
-			String matrixOutputLocation = args[1] + "/MatrixOutput.txt";
-			FileWriter matrixOutputFile = new FileWriter(matrixOutputLocation);
-			BufferedWriter matrixOutputWriter = new BufferedWriter(matrixOutputFile);
-			for (int i = 0; i < featuresUsed.size(); i++)
-			{
-				// Write out the feature name.
-				matrixOutputWriter.write(featuresUsed.get(i));
-				matrixOutputWriter.write("\t");
-				// Write out the presence (1)/absence (0) of the feature for the given run, and sum up the occurrences
-				// of the feature in the runs.
-				int featureOccurreces = 0;
-				for (int j = 0; j < bestIndividuals.size(); j++)
-				{
-					int individualsValue = bestIndividuals.get(j)[i];
-					featureOccurreces += individualsValue;
-					matrixOutputWriter.write(Integer.toString(individualsValue));
-					matrixOutputWriter.write("\t");
-				}
-				matrixOutputWriter.write(Integer.toString(featureOccurreces));
-				matrixOutputWriter.newLine();
-				featureSums.add(featureOccurreces);
-			}
-			matrixOutputWriter.close();
-		}
-		catch (Exception e)
-		{
-			System.err.println(e.getStackTrace());
-			System.exit(0);
-		}
-
-		// Generate the feature subsets for features that occur in 10%, 20%, ..., 100% of the best individuals.
-		for (double d = 1; d < 11; d++)
-		{
-			double featureFraction = d / 10.0;
-			int numberOfOccurences = (int) Math.floor(featureFraction * bestIndividuals.size());  // Determine the number of times a feature must occur for it to be included in the feature set.
-			List<String> featureSet = new ArrayList<String>();
-			for (int i = 0; i < featuresUsed.size(); i++)
-			{
-				if (featureSums.get(i) >= numberOfOccurences)
-				{
-					// If the ith feature occurred enough times.
-					featureSet.add(featuresUsed.get(i));
-				}
-			}
-			// Write out the feature set.
-			try
-			{
-				String featureSetOutputLocation = args[1] + "/" + Integer.toString((int) (featureFraction * 100)) + "%FeatureSet.txt";
-				FileWriter featureSetOutputFile = new FileWriter(featureSetOutputLocation);
-				BufferedWriter featureSetOutputWriter = new BufferedWriter(featureSetOutputFile);
-				for (String s : featureSet)
-				{
-					featureSetOutputWriter.write(s);
-					featureSetOutputWriter.newLine();
-				}
-				featureSetOutputWriter.close();
-			}
-			catch (Exception e)
-			{
-				System.err.println(e.getStackTrace());
-				System.exit(0);
-			}
-		}
+		gaAnalysis(args[0], args[1], ctrl);
 
 	}
 
@@ -436,70 +339,163 @@ public class Controller
 //	}
 
 	/**
-	 * Determine the weighting of each class as its proportion of the total number of observations.
-	 * 
 	 * @param inputLocation
-	 * @return
+	 * @param resultDirLoc - directory containing results of the multiple GA runs for one dataset - must only contain the directories to use, no extra files or directories
+	 * @param ctrl - the TreeGrowthCotrol object used to run the GA (or an equivalent one)
 	 */
-	Double[] determineWeights(String inputLocation)
+	void gaAnalysis(String inputLocation, String resultsDirLoc, TreeGrowthControl ctrl)
 	{
-		ProcessDataForGrowing procData = new ProcessDataForGrowing(inputLocation);
 
-		// Determine how often each class occurs.
-		Map<String, Double> classCounts = new HashMap<String, Double>();
-		for (String s : procData.responseData.keySet())
+		File inputFile = new File(inputLocation);
+		if (!inputFile.isFile())
 		{
-			classCounts.put(s, 0.0);
+			System.out.println("The first argument must be a valid file location, and must contain the data for feature selection.");
+			System.exit(0);
 		}
-		for (int i = 0; i < procData.numberObservations; i++)
+
+		File outputDirectory = new File(resultsDirLoc);
+		if (!outputDirectory.isDirectory())
 		{
-			String obsClass = "";
-			for (String s : procData.responseData.keySet())
+			System.out.println("The second argument must be a valid directory location.");
+			System.exit(0);
+		}
+
+		// Get the best individuals from the GA runs.
+		List<Integer[]> bestIndividuals = new ArrayList<Integer[]>();
+		for (String s : outputDirectory.list())
+		{
+			String bestIndivLocation = resultsDirLoc + "/" + s + "/BestIndividuals.txt";
+			try (BufferedReader reader = Files.newBufferedReader(Paths.get(bestIndivLocation), StandardCharsets.UTF_8))
 			{
-				if (procData.responseData.get(s).get(i) == 1)
+				String line;
+				while ((line = reader.readLine()) != null)
 				{
-					obsClass = s;
+					line = line.replaceAll("\n", "");
+					if (line.trim().length() == 0)
+					{
+						// If the line is made up of all whitespace, then ignore the line.
+						continue;
+					}
+					else if (line.contains("Fitness"))
+					{
+						// The line indicates the fitness of the individual, so skip it.
+						continue;
+					}
+					List<Integer> individual = new ArrayList<Integer>();
+					for (String p : line.split(","))
+					{
+						individual.add(Integer.parseInt(p));
+					}
+					bestIndividuals.add(individual.toArray(new Integer[individual.size()]));
 				}
 			}
-			classCounts.put(obsClass, classCounts.get(obsClass) + 1.0);
-		}
-
-		// Find the number of occurrences of the class that occurs most often.
-		double maxClass = 0.0;
-		for (String s : classCounts.keySet())
-		{
-			if (classCounts.get(s) > maxClass)
+			catch (Exception e)
 			{
-				maxClass = classCounts.get(s);
+				e.printStackTrace();
+				System.exit(0);
 			}
 		}
 
-		// Determine the weighting of each class in relation to the class that occurs most often.
-		// Weights the most frequent class as 1.
-		// Two classes, A occurs 10 times and B 5 times. A gets a weight of 1 / (10 / 10) == 1.
-		// B gets a weight of 1 / (5 / 10) == 2.
-		Map<String, Double> classWeights = new HashMap<String, Double>();
-		for (String s : classCounts.keySet())
+		// Get the names and types of the features (the types are so that you know which features are the response and which aren't used).
+		String featureNames[] = null;
+		String featureTypes[] = null;
+		try (BufferedReader reader = Files.newBufferedReader(Paths.get(inputLocation), StandardCharsets.UTF_8))
 		{
-			classWeights.put(s, 1.0 / (classCounts.get(s) / maxClass));
+			String line = reader.readLine();
+			line = line.replaceAll("\n", "");
+			featureNames = line.split("\t");
+
+			line = reader.readLine();
+			line = line.toLowerCase();
+			line = line.replaceAll("\n", "");
+			featureTypes = line.split("\t");
+		}
+		catch (Exception e)
+		{
+			e.printStackTrace();
+			System.exit(0);
 		}
 
-		// Generate the weight vector.
-		Double returnValue[] = new Double[procData.numberObservations];
-		for (int i = 0; i < procData.numberObservations; i++)
+		// Determine the features that are used in the GAs.
+		List<String> featuresUsed = new ArrayList<String>();
+		for (int i = 0; i < featureNames.length; i++)
 		{
-			String obsClass = "";
-			for (String s : procData.responseData.keySet())
+			if (featureTypes[i].equals("x") || featureTypes[i].equals("r"))
 			{
-				if (procData.responseData.get(s).get(i) == 1)
+				// If the feature is a response variable or is to be skipped.
+				continue;
+			}
+			featuresUsed.add(featureNames[i]);
+		}
+
+		// Generate the output matrix.
+		List<Integer> featureSums = new ArrayList<Integer>();
+		try
+		{
+			String matrixOutputLocation = resultsDirLoc + "/MatrixOutput.txt";
+			FileWriter matrixOutputFile = new FileWriter(matrixOutputLocation);
+			BufferedWriter matrixOutputWriter = new BufferedWriter(matrixOutputFile);
+			for (int i = 0; i < featuresUsed.size(); i++)
+			{
+				// Write out the feature name.
+				matrixOutputWriter.write(featuresUsed.get(i));
+				matrixOutputWriter.write("\t");
+				// Write out the presence (1)/absence (0) of the feature for the given run, and sum up the occurrences
+				// of the feature in the runs.
+				int featureOccurreces = 0;
+				for (int j = 0; j < bestIndividuals.size(); j++)
 				{
-					obsClass = s;
+					int individualsValue = bestIndividuals.get(j)[i];
+					featureOccurreces += individualsValue;
+					matrixOutputWriter.write(Integer.toString(individualsValue));
+					matrixOutputWriter.write("\t");
+				}
+				matrixOutputWriter.write(Integer.toString(featureOccurreces));
+				matrixOutputWriter.newLine();
+				featureSums.add(featureOccurreces);
+			}
+			matrixOutputWriter.close();
+		}
+		catch (Exception e)
+		{
+			e.printStackTrace();
+			System.exit(0);
+		}
+
+		// Generate the feature subsets for features that occur in 10%, 20%, ..., 100% of the best individuals.
+		for (double d = 1; d < 11; d++)
+		{
+			double featureFraction = d / 10.0;
+			int numberOfOccurences = (int) Math.floor(featureFraction * bestIndividuals.size());  // Determine the number of times a feature must occur for it to be included in the feature set.
+			List<String> featureSet = new ArrayList<String>();
+			for (int i = 0; i < featuresUsed.size(); i++)
+			{
+				if (featureSums.get(i) >= numberOfOccurences)
+				{
+					// If the ith feature occurred enough times.
+					featureSet.add(featuresUsed.get(i));
 				}
 			}
-			returnValue[i] = classWeights.get(obsClass);
+			// Write out the feature set.
+			try
+			{
+				String featureSetOutputLocation = resultsDirLoc + "/" + Integer.toString((int) (featureFraction * 100)) + "%FeatureSet.txt";
+				FileWriter featureSetOutputFile = new FileWriter(featureSetOutputLocation);
+				BufferedWriter featureSetOutputWriter = new BufferedWriter(featureSetOutputFile);
+				for (String s : featureSet)
+				{
+					featureSetOutputWriter.write(s);
+					featureSetOutputWriter.newLine();
+				}
+				featureSetOutputWriter.close();
+			}
+			catch (Exception e)
+			{
+				e.printStackTrace();
+				System.exit(0);
+			}
 		}
 
-		return returnValue;
 	}
 
 	void removeDirectoryContent(File directory)

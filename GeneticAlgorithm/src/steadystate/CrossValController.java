@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -50,15 +51,15 @@ public class CrossValController
 		ctrl.minCriterion = -Double.MAX_VALUE;
 		ctrl.isClassificationUsed = true;
 		ctrl.numberOfTreesToGrow = 100;
-		run(args, ctrl, null);
+		run(args, ctrl, new ArrayList<Double[]>());
 	}
 
 	public CrossValController(String[] args, TreeGrowthControl ctrl)
 	{
-		run(args, ctrl, null);
+		run(args, ctrl, new ArrayList<Double[]>());
 	}
 
-	public CrossValController(String[] args, TreeGrowthControl ctrl, Double weightVector[])
+	public CrossValController(String[] args, TreeGrowthControl ctrl, List<Double[]> weightVector)
 	{
 		run(args, ctrl, weightVector);
 	}
@@ -70,7 +71,7 @@ public class CrossValController
 	 * @param numberOfObs
 	 * @param ctrl
 	 */
-	void run(String[] args, TreeGrowthControl ctrl, Double weightVector[])
+	void run(String[] args, TreeGrowthControl ctrl, List<Double[]> weightVector)
 	{
 
 		// Required inputs.
@@ -83,13 +84,19 @@ public class CrossValController
 		}
 		String outputLocation = args[1];  // The location to store any and all results.
 		File outputDirectory = new File(outputLocation);
-		if (outputDirectory.isDirectory())
+		if (!outputDirectory.exists())
 		{
-			removeDirectoryContent(outputDirectory);
+			boolean isDirCreated = outputDirectory.mkdirs();
+			if (!isDirCreated)
+			{
+				System.out.println("The output directory could not be created.");
+				System.exit(0);
+			}
+			
 		}
-		boolean isDirCreated = outputDirectory.mkdirs();
-		if (!isDirCreated)
+		else if (!outputDirectory.isDirectory())
 		{
+			// Exists and is not a directory.
 			System.out.println("The second argument must be a valid directory location or location where a directory can be created.");
 			System.exit(0);
 		}
@@ -325,6 +332,16 @@ public class CrossValController
     		}
     	}
 
+    	// Determine the vector of weights to use for each cross validation fold.
+    	if (weightVector.size() < crossValFiles.size())
+    	{
+    		weightVector.clear();
+    		for (List<Object> l : crossValFiles)
+    		{
+    			weightVector.add(determineWeights((String) l.get(0), ctrl));
+    		}
+    	}
+
 	    // Calculate the fitness of the initial population.
 	    List<Double> fitness = new ArrayList<Double>();
 	    for (Integer[] geneSet : population)
@@ -341,17 +358,10 @@ public class CrossValController
 	    	ctrl.variablesToIgnore = variablesToIgnore;
 	    	Forest forest;
 	    	double cumulativeError = 0.0;
-	    	for (List<Object> l : crossValFiles)
+	    	for (int i = 0; i < crossValFiles.size(); i++)
 	    	{
-	    		if (weightVector == null)
-	    		{
-	    			forest = new Forest((String) l.get(0), ctrl);
-	    		}
-	    		else
-	    		{
-	    			forest = new Forest((String) l.get(0), ctrl, weightVector);
-	    		}
-	    		ImmutableTwoValues<Double, Map<Integer,String>> predRes = forest.predict((ProcessDataForGrowing) l.get(1));
+	    		forest = new Forest((String) crossValFiles.get(i).get(0), ctrl, weightVector.get(i));
+	    		ImmutableTwoValues<Double, Map<Integer,String>> predRes = forest.predict((ProcessDataForGrowing) crossValFiles.get(i).get(1));
 	    		cumulativeError += predRes.first;
 	    	}
 	    	fitness.add(cumulativeError / crossValFiles.size());
@@ -442,16 +452,14 @@ public class CrossValController
 		    	}
 		    	ctrl.variablesToIgnore = variablesToIgnore;
 		    	Forest forest;
-		    	if (weightVector == null)
+		    	double cumulativeError = 0.0;
+		    	for (int i = 0; i < crossValFiles.size(); i++)
 		    	{
-		    		// If no weight vector was supplied.
-		    		forest = new Forest(inputLocation, ctrl);
+		    		forest = new Forest((String) crossValFiles.get(i).get(0), ctrl, weightVector.get(i));
+		    		ImmutableTwoValues<Double, Map<Integer,String>> predRes = forest.predict((ProcessDataForGrowing) crossValFiles.get(i).get(1));
+		    		cumulativeError += predRes.first;
 		    	}
-		    	else
-		    	{
-		    		forest = new Forest(inputLocation, ctrl, weightVector);
-		    	}
-		    	offspringFitness.add(forest.oobErrorEstimate);
+		    	offspringFitness.add(cumulativeError / crossValFiles.size());
 		    	numberEvaluations += 1;
 		    }
 
@@ -554,6 +562,73 @@ public class CrossValController
 			System.exit(0);
 		}
 
+	}
+
+	/**
+	 * Determine the weighting of each class as its proportion of the total number of observations.
+	 * 
+	 * @param inputLocation
+	 * @return
+	 */
+	Double[] determineWeights(String inputLocation, TreeGrowthControl ctrl)
+	{
+		ProcessDataForGrowing procData = new ProcessDataForGrowing(inputLocation, ctrl);
+
+		// Determine how often each class occurs.
+		Map<String, Double> classCounts = new HashMap<String, Double>();
+		for (String s : procData.responseData.keySet())
+		{
+			classCounts.put(s, 0.0);
+		}
+		for (int i = 0; i < procData.numberObservations; i++)
+		{
+			String obsClass = "";
+			for (String s : procData.responseData.keySet())
+			{
+				if (procData.responseData.get(s).get(i) == 1)
+				{
+					obsClass = s;
+				}
+			}
+			classCounts.put(obsClass, classCounts.get(obsClass) + 1.0);
+		}
+
+		// Find the number of occurrences of the class that occurs most often.
+		double maxClass = 0.0;
+		for (String s : classCounts.keySet())
+		{
+			if (classCounts.get(s) > maxClass)
+			{
+				maxClass = classCounts.get(s);
+			}
+		}
+
+		// Determine the weighting of each class in relation to the class that occurs most often.
+		// Weights the most frequent class as 1.
+		// Two classes, A occurs 10 times and B 5 times. A gets a weight of 1 / (10 / 10) == 1.
+		// B gets a weight of 1 / (5 / 10) == 2.
+		Map<String, Double> classWeights = new HashMap<String, Double>();
+		for (String s : classCounts.keySet())
+		{
+			classWeights.put(s, 1.0 / (classCounts.get(s) / maxClass));
+		}
+
+		// Generate the weight vector.
+		Double returnValue[] = new Double[procData.numberObservations];
+		for (int i = 0; i < procData.numberObservations; i++)
+		{
+			String obsClass = "";
+			for (String s : procData.responseData.keySet())
+			{
+				if (procData.responseData.get(s).get(i) == 1)
+				{
+					obsClass = s;
+				}
+			}
+			returnValue[i] = classWeights.get(obsClass);
+		}
+
+		return returnValue;
 	}
 
 	boolean loopTermination(int currentGen, int maxGens, int currentEvals, int maxEvals,

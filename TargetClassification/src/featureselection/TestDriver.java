@@ -6,7 +6,7 @@ package featureselection;
 import tree.TreeGrowthControl;
 
 /**
- * @author Simon
+ * @author Simon Bull
  *
  */
 public class TestDriver
@@ -20,10 +20,10 @@ public class TestDriver
 		TreeGrowthControl ctrl = new TreeGrowthControl();
 		ctrl.minCriterion = -Double.MAX_VALUE;
 		ctrl.isClassificationUsed = true;
-		ctrl.isReplacementUsed = true;
+		ctrl.isReplacementUsed = false;
 		ctrl.numberOfTreesToGrow = 100;
 		int gaRepetitions = 10;
-		boolean isXValUsed = false;
+		boolean isXValUsed = true;
 		new Controller(args, ctrl, gaRepetitions, isXValUsed);
 	}
 

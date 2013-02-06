@@ -14,13 +14,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
 import tree.Forest;
 import tree.IndexedDoubleData;
+import tree.ProcessDataForGrowing;
 import tree.TreeGrowthControl;
 
 /**
@@ -80,13 +83,19 @@ public class Controller
 		}
 		String outputLocation = args[1];  // The location to store any and all results.
 		File outputDirectory = new File(outputLocation);
-		if (outputDirectory.isDirectory())
+		if (!outputDirectory.exists())
 		{
-			removeDirectoryContent(outputDirectory);
+			boolean isDirCreated = outputDirectory.mkdirs();
+			if (!isDirCreated)
+			{
+				System.out.println("The output directory could not be created.");
+				System.exit(0);
+			}
+			
 		}
-		boolean isDirCreated = outputDirectory.mkdirs();
-		if (!isDirCreated)
+		else if (!outputDirectory.isDirectory())
 		{
+			// Exists and is not a directory.
 			System.out.println("The second argument must be a valid directory location or location where a directory can be created.");
 			System.exit(0);
 		}
@@ -102,7 +111,7 @@ public class Controller
 		boolean verbose = false;  // Whether status updates should be displayed.
 
 		// Read in the user input.
-		int argIndex = 2;
+		int argIndex = 3;
 		while (argIndex < args.length)
 		{
 			String currentArg = args[argIndex];
@@ -182,7 +191,7 @@ public class Controller
 		}
 		catch (Exception e)
 		{
-			System.err.println(e.getStackTrace());
+			e.printStackTrace();
 			System.exit(0);
 		}
 
@@ -216,7 +225,7 @@ public class Controller
 		}
 		catch (Exception e)
 		{
-			System.err.println(e.getStackTrace());
+			e.printStackTrace();
 			System.exit(0);
 		}
 
@@ -248,7 +257,7 @@ public class Controller
 		}
 		catch (Exception e)
 		{
-			System.err.println(e.getStackTrace());
+			e.printStackTrace();
 			System.exit(0);
 		}
 
@@ -301,6 +310,12 @@ public class Controller
     		}
     	}
 
+    	// Determine the vector of weights to use.
+    	if (weightVector == null)
+    	{
+    		weightVector = determineWeights(args[0], ctrl);
+    	}
+
 	    // Calculate the fitness of the initial population.
 	    List<Double> fitness = new ArrayList<Double>();
 	    for (Integer[] geneSet : population)
@@ -315,16 +330,7 @@ public class Controller
 	    		}
 	    	}
 	    	ctrl.variablesToIgnore = variablesToIgnore;
-	    	Forest forest;
-	    	if (weightVector == null)
-	    	{
-	    		// If no weight vector was supplied.
-	    		forest = new Forest(inputLocation, ctrl);
-	    	}
-	    	else
-	    	{
-	    		forest = new Forest(inputLocation, ctrl, weightVector);
-	    	}
+	    	Forest forest = new Forest(inputLocation, ctrl, weightVector);
 	    	fitness.add(forest.oobErrorEstimate);
 	    	numberEvaluations += 1;
 	    }
@@ -412,16 +418,7 @@ public class Controller
 		    		}
 		    	}
 		    	ctrl.variablesToIgnore = variablesToIgnore;
-		    	Forest forest;
-		    	if (weightVector == null)
-		    	{
-		    		// If no weight vector was supplied.
-		    		forest = new Forest(inputLocation, ctrl);
-		    	}
-		    	else
-		    	{
-		    		forest = new Forest(inputLocation, ctrl, weightVector);
-		    	}
+		    	Forest forest = new Forest(inputLocation, ctrl, weightVector);
 		    	offspringFitness.add(forest.oobErrorEstimate);
 		    	numberEvaluations += 1;
 		    }
@@ -494,7 +491,7 @@ public class Controller
 		}
 		catch (Exception e)
 		{
-			System.err.println(e.getStackTrace());
+			e.printStackTrace();
 			System.exit(0);
 		}
 
@@ -521,10 +518,77 @@ public class Controller
 		}
 		catch (Exception e)
 		{
-			System.err.println(e.getStackTrace());
+			e.printStackTrace();
 			System.exit(0);
 		}
 
+	}
+
+	/**
+	 * Determine the weighting of each class as its proportion of the total number of observations.
+	 * 
+	 * @param inputLocation
+	 * @return
+	 */
+	Double[] determineWeights(String inputLocation, TreeGrowthControl ctrl)
+	{
+		ProcessDataForGrowing procData = new ProcessDataForGrowing(inputLocation, ctrl);
+
+		// Determine how often each class occurs.
+		Map<String, Double> classCounts = new HashMap<String, Double>();
+		for (String s : procData.responseData.keySet())
+		{
+			classCounts.put(s, 0.0);
+		}
+		for (int i = 0; i < procData.numberObservations; i++)
+		{
+			String obsClass = "";
+			for (String s : procData.responseData.keySet())
+			{
+				if (procData.responseData.get(s).get(i) == 1)
+				{
+					obsClass = s;
+				}
+			}
+			classCounts.put(obsClass, classCounts.get(obsClass) + 1.0);
+		}
+
+		// Find the number of occurrences of the class that occurs most often.
+		double maxClass = 0.0;
+		for (String s : classCounts.keySet())
+		{
+			if (classCounts.get(s) > maxClass)
+			{
+				maxClass = classCounts.get(s);
+			}
+		}
+
+		// Determine the weighting of each class in relation to the class that occurs most often.
+		// Weights the most frequent class as 1.
+		// Two classes, A occurs 10 times and B 5 times. A gets a weight of 1 / (10 / 10) == 1.
+		// B gets a weight of 1 / (5 / 10) == 2.
+		Map<String, Double> classWeights = new HashMap<String, Double>();
+		for (String s : classCounts.keySet())
+		{
+			classWeights.put(s, 1.0 / (classCounts.get(s) / maxClass));
+		}
+
+		// Generate the weight vector.
+		Double returnValue[] = new Double[procData.numberObservations];
+		for (int i = 0; i < procData.numberObservations; i++)
+		{
+			String obsClass = "";
+			for (String s : procData.responseData.keySet())
+			{
+				if (procData.responseData.get(s).get(i) == 1)
+				{
+					obsClass = s;
+				}
+			}
+			returnValue[i] = classWeights.get(obsClass);
+		}
+
+		return returnValue;
 	}
 
 	boolean loopTermination(int currentGen, int maxGens, int currentEvals, int maxEvals,
@@ -593,7 +657,7 @@ public class Controller
 		}
 		catch (Exception e)
 		{
-			System.err.println(e.getStackTrace());
+			e.printStackTrace();
 			System.exit(0);
 		}
 
@@ -612,7 +676,7 @@ public class Controller
 		}
 		catch (Exception e)
 		{
-			System.err.println(e.getStackTrace());
+			e.printStackTrace();
 			System.exit(0);
 		}
 
@@ -662,7 +726,7 @@ public class Controller
 		}
 		catch (Exception e)
 		{
-			System.err.println(e.getStackTrace());
+			e.printStackTrace();
 			System.exit(0);
 		}
 	}
